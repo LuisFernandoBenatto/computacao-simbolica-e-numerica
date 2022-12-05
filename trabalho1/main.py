@@ -1,5 +1,7 @@
+from datetime import datetime
 import math
 from pathlib import Path
+from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -10,6 +12,8 @@ from sklearn.metrics import mean_squared_error, mean_absolute_error
 CWD = Path(__name__).parent
 GASTO_MENSAL_PATH = CWD / 'gasto-mensal.xls'
 SALARIO_MINIMO_MENSAL_PATH = CWD / 'salario-minimo-mensal.xlsx'
+EXPORTED_DFS_DIR_PATH = CWD / 'exported-dfs'
+EXPORTED_DFS_DIR_PATH.mkdir(parents=True, exist_ok=True)
 
 
 # TODO: dowloand dataset automaticly with requests or selenium
@@ -46,6 +50,8 @@ class HandleDieeseDataset:
         self.monthly_expense_df = self.get_monthly_expense_df()
         self.basic_salary_df = self.get_basic_salary_df()
         self.merged_df = self.get_dfs_merged()
+        self._polynomial_expr = None
+        self._polynomial_results = None
 
     def _get_df(self, file: Path, **kwargs):
         if not file.is_file():
@@ -248,12 +254,76 @@ class HandleDieeseDataset:
                 df.apply(fill_relation, axis=1))
         return df
 
+    def _get_df_dates(self, df=None):
+        if df is None:
+            df = self.merged_df
+        return df['Date (mm-yyyy)'].values
+
+    def _get_df_percentages(self, df=None):
+        if df is None:
+            df = self.merged_df
+        return df['percentage_between_basic_salary_and_monthly_expense'].values
+
+    def _get_x_y_for_polynomial_regression(self):
+        df = self.merged_df
+        dates = self._get_df_dates(df)
+        # +1 to start from 1 instead of 0
+        dates_parsed = [idx + 1 for idx, _ in enumerate(dates)]
+        percentages = self._get_df_percentages(df)
+
+        x = dates_parsed
+        y = percentages
+        return x, y
+
+    def get_polynomial_regression_expr(self, degree: Optional[int] = None):
+        x, y = self._get_x_y_for_polynomial_regression()
+        degree = degree or len(x) - 1
+
+        model = np.poly1d(np.polyfit(x, y, degree))
+        y_model = model(x)
+        self._polynomial_expr = model
+        self._polynomial_results = y_model
+        return model, y_model
+
+    def fill_errors_between_real_points_and_polynomial_points(
+            self,
+            model,
+            y_model,
+            ):
+        df = self.merged_df
+        df['polynomial_regression_points'] = y_model
+
+        error_functions = [
+            self.real_error, self.absolute_error, self.relative_error]
+        column_name_suffix = 'between_real_points_and_polynomial_points'
+        for func in error_functions:
+            column_name = f'{func.__name__}_{column_name_suffix}'
+            df[column_name] = df.apply(
+                lambda row: func(
+                    row.percentage_between_basic_salary_and_monthly_expense,
+                    row.polynomial_regression_points),
+                axis=1)
+
     def process(self):
         self.fill_average_expenses()
         self.fill_errors_info()
         self.fill_percentage_between_basic_salary_and_monthly_expense()
+        model, y = self.get_polynomial_regression_expr(degree=6)
+        self.fill_errors_between_real_points_and_polynomial_points(model, y)
 
-    def plot_polynomial_regression(self):
+    def get_next_polynomial_point(self):
+        x, _ = self._get_x_y_for_polynomial_regression()
+        next_point = x[-1] + 1
+        return self._polynomial_expr(next_point)
+
+    def export_df_to_csv(self):
+        df = self.merged_df
+        now = datetime.now()
+        now_formatted = now.strftime('%Y-%m-%d_%H-%M-%S')
+        filename = f"{now_formatted}.csv"
+        df.to_csv(EXPORTED_DFS_DIR_PATH / filename, index=False)
+
+    def plot_polynomial_regression_tests(self):
         df = self.merged_df
         dates = df['Date (mm-yyyy)'].values
         dates_parsed = [idx + 10 for idx, _ in enumerate(dates)]
@@ -318,7 +388,9 @@ class HandleDieeseDataset:
 def main():
     instance = HandleDieeseDataset()
     instance.process()
-    instance.plot_polynomial_regression()
+    instance.export_df_to_csv()
+    print(f'Next polynomial point = {instance.get_next_polynomial_point()}')
+    # instance.plot_polynomial_regression()
 
 
 if __name__ == '__main__':

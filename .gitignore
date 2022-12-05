@@ -131,4 +131,4 @@ dmypy.json
 # Local
 .DS_Store
 .idea
-
+trabalho1/exported-dfs/**

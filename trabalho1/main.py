@@ -5,6 +5,7 @@ from typing import Optional
 
 import numpy as np
 import pandas as pd
+import sympy
 import matplotlib.pyplot as plt
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 
@@ -15,6 +16,7 @@ SALARIO_MINIMO_MENSAL_PATH = CWD / 'salario-minimo-mensal.xlsx'
 EXPORTED_DFS_DIR_PATH = CWD / 'exported-dfs'
 EXPORTED_DFS_DIR_PATH.mkdir(parents=True, exist_ok=True)
 
+X = sympy.Symbol('x')
 
 # TODO: dowloand dataset automaticly with requests or selenium
 
@@ -50,6 +52,8 @@ class HandleDieeseDataset:
         self.monthly_expense_df = self.get_monthly_expense_df()
         self.basic_salary_df = self.get_basic_salary_df()
         self.merged_df = self.get_dfs_merged()
+
+        # XUNXO
         self._polynomial_expr = None
         self._polynomial_results = None
 
@@ -285,6 +289,57 @@ class HandleDieeseDataset:
         self._polynomial_results = y_model
         return model, y_model
 
+    def lagrange_polynom(self, points):
+        p = 0
+        results = []
+        for j, (x_j, y_j) in enumerate(points):
+            result = 1
+            for i, (x_i, y_i) in enumerate(points):
+                if j != i:
+                    result = result * ((X - x_i) / (x_j - x_i))
+
+            results.append(result)
+            p = p + (result * y_j)
+
+        return p, result
+
+    def get_langrage_polynomial_regression_expr(self, months=None):
+        df = self.merged_df
+        if not months:
+            months = ['03-2000', '05-2002', '03-2003', '08-2006', '07-2008',
+                      '03-2012', '08-2016', '09-2018', '04-2022', '09-2022']
+
+        df_filtered = df.loc[df['Date (mm-yyyy)'].isin(months)]
+        assert len(months) == len(df_filtered), 'Not found some months'
+
+        points = [
+            (row.name, row.percentage_between_basic_salary_and_monthly_expense)
+            for _, row in df_filtered.iterrows()
+            ]
+        p, result = self.lagrange_polynom(points)
+        p_expanded = sympy.expand(p)
+        return p_expanded
+
+    def _plot_langrage_polynomial(self):
+        df = self.merged_df
+        p_expanded = self.get_langrage_polynomial_regression_expr()
+
+        xpoints, ypoints = [], []
+        for number in range(len(df)):
+            xpoints.append(number)
+            ypoints.append(p_expanded.subs({X: number}).n())
+
+        plt.plot(xpoints, ypoints)
+        plt.xlabel('Mês-Ano')
+        plt.ylabel('Percetual de impacto da cesta básica no salário mínimo')
+        plt.title(f'Polinomio de Lagrange - Grau 9')
+        print(p_expanded)
+        plt.show()
+
+    def fill_errors_between_real_points_and_lagrange_polynomial_points(self):
+        # We decide to not implement yet because the error is high
+        raise NotImplementedError()
+
     def fill_errors_between_real_points_and_polynomial_points(
             self,
             model,
@@ -311,10 +366,13 @@ class HandleDieeseDataset:
         model, y = self.get_polynomial_regression_expr(degree=6)
         self.fill_errors_between_real_points_and_polynomial_points(model, y)
 
-    def get_next_polynomial_point(self):
+    def get_next_polynomial_point(self, quantity=1):
         x, _ = self._get_x_y_for_polynomial_regression()
-        next_point = x[-1] + 1
-        return self._polynomial_expr(next_point)
+        results = []
+        for number in range(1, quantity + 1):
+            next_point = x[-1] + number
+            results.append((next_point, self._polynomial_expr(next_point)))
+        return results
 
     def export_df_to_csv(self):
         df = self.merged_df
@@ -388,9 +446,19 @@ class HandleDieeseDataset:
 def main():
     instance = HandleDieeseDataset()
     instance.process()
-    instance.export_df_to_csv()
-    print(f'Next polynomial point = {instance.get_next_polynomial_point()}')
-    # instance.plot_polynomial_regression()
+    # instance.export_df_to_csv()
+
+    predictions = instance.get_next_polynomial_point(4)
+    last_month, last_year = 9, 2022
+    for point, prediction in predictions:
+        last_month += 1
+        if last_month > 12:
+            last_month = 1
+            last_year += 1
+
+        print(f'Previsão {last_month}-{last_year}: {prediction}')
+
+    # instance.plot_polynomial_regression_tests()
 
 
 if __name__ == '__main__':

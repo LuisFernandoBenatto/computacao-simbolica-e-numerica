@@ -56,6 +56,8 @@ class HandleDieeseDataset:
         # XUNXO
         self._polynomial_expr = None
         self._polynomial_results = None
+        self._basic_salary_polynomial_expr = None
+        self._basic_salary_polynomial_results = None
 
     def _get_df(self, file: Path, **kwargs):
         if not file.is_file():
@@ -268,25 +270,46 @@ class HandleDieeseDataset:
             df = self.merged_df
         return df['percentage_between_basic_salary_and_monthly_expense'].values
 
-    def _get_x_y_for_polynomial_regression(self):
+    def _get_df_basic_salary(self, df=None):
+        if df is None:
+            df = self.merged_df
+        return df['Salário Mínimo'].values
+
+    def _get_x_y_for_polynomial_regression(self, y_label='percentages'):
         df = self.merged_df
         dates = self._get_df_dates(df)
         # +1 to start from 1 instead of 0
         dates_parsed = [idx + 1 for idx, _ in enumerate(dates)]
-        percentages = self._get_df_percentages(df)
+        if y_label == 'percentages':
+            y = self._get_df_percentages(df)
+        elif y_label == 'basic_salary':
+            y = self._get_df_basic_salary(df)
+        else:
+            raise ValueError(f"Invalid value '{y_label}' "
+                             "for y_label parameter")
 
         x = dates_parsed
-        y = percentages
         return x, y
 
-    def get_polynomial_regression_expr(self, degree: Optional[int] = None):
-        x, y = self._get_x_y_for_polynomial_regression()
+    def get_polynomial_regression_expr(
+            self,
+            degree: Optional[int] = None,
+            y_label='percentages',
+            ):
+        x, y = self._get_x_y_for_polynomial_regression(y_label)
         degree = degree or len(x) - 1
 
         model = np.poly1d(np.polyfit(x, y, degree))
         y_model = model(x)
-        self._polynomial_expr = model
-        self._polynomial_results = y_model
+        if y_label == 'percentages':
+            self._polynomial_expr = model
+            self._polynomial_results = y_model
+        elif y_label == 'basic_salary':
+            self._basic_salary_polynomial_expr = model
+            self._basic_salary_polynomial_results = y_model
+        else:
+            raise ValueError(f"Invalid value '{y_label}' "
+                             "for y_label parameter")
         return model, y_model
 
     def lagrange_polynom(self, points):
@@ -365,13 +388,23 @@ class HandleDieeseDataset:
         self.fill_percentage_between_basic_salary_and_monthly_expense()
         model, y = self.get_polynomial_regression_expr(degree=6)
         self.fill_errors_between_real_points_and_polynomial_points(model, y)
+        self.get_polynomial_regression_expr(degree=5, y_label='basic_salary')  # XUNXO
 
-    def get_next_polynomial_point(self, quantity=1):
-        x, _ = self._get_x_y_for_polynomial_regression()
+    def get_next_polynomial_point(self, quantity=1, y_label='percentages'):
+        x, _ = self._get_x_y_for_polynomial_regression(y_label)
+        if y_label == 'percentages':
+            polynomial_expr = self._polynomial_expr
+        elif y_label == 'basic_salary':
+            polynomial_expr = self._basic_salary_polynomial_expr
+        else:
+            raise ValueError(f"Invalid value '{y_label}' "
+                             "for y_label parameter")
+
         results = []
         for number in range(1, quantity + 1):
             next_point = x[-1] + number
-            results.append((next_point, self._polynomial_expr(next_point)))
+            results.append((next_point, polynomial_expr(next_point)))
+
         return results
 
     def export_df_to_csv(self):
@@ -381,15 +414,19 @@ class HandleDieeseDataset:
         filename = f"{now_formatted}.csv"
         df.to_csv(EXPORTED_DFS_DIR_PATH / filename, index=False)
 
-    def plot_polynomial_regression_tests(self):
+    def plot_polynomial_regression_tests(self, y_label='percentages'):
         df = self.merged_df
         dates = df['Date (mm-yyyy)'].values
         dates_parsed = [idx + 10 for idx, _ in enumerate(dates)]
-        percentages = df[
-            'percentage_between_basic_salary_and_monthly_expense'].values
 
         x = dates_parsed
-        y = percentages
+        if y_label == 'percentages':
+            y = self._get_df_percentages(df)
+        elif y_label == 'basic_salary':
+            y = self._get_df_basic_salary(df)
+        else:
+            raise ValueError(f"Invalid value '{y_label}' "
+                             "for y_label parameter")
 
         model2 = np.poly1d(np.polyfit(x, y, 2))
         model3 = np.poly1d(np.polyfit(x, y, 3))
@@ -446,6 +483,7 @@ class HandleDieeseDataset:
 def main():
     instance = HandleDieeseDataset()
     instance.process()
+    # instance.plot_polynomial_regression_tests('basic_salary')
     # instance.export_df_to_csv()
 
     predictions = instance.get_next_polynomial_point(4)
@@ -457,6 +495,18 @@ def main():
             last_year += 1
 
         print(f'Previsão {last_month}-{last_year}: {prediction}')
+
+    basic_salary_predictions = instance.get_next_polynomial_point(
+            4, y_label='basic_salary')
+    last_month, last_year = 9, 2022
+    for point, prediction in basic_salary_predictions:
+        last_month += 1
+        if last_month > 12:
+            last_month = 1
+            last_year += 1
+
+        print('Previsão Salário Mínimo '
+              f'{last_month}-{last_year}: {prediction}')
 
     # instance.plot_polynomial_regression_tests()
 
